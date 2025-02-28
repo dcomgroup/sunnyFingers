@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MIDI Bass Synth</title>
+</head>
+<body>
+    <h2>MIDI Bass Synth</h2>
+    <label for="midi-input">MIDI Input:</label>
+    <select id="midi-input"></select>
+    <p>Play a MIDI keyboard to generate bass sounds.</p>
+    
+    <script>
+        let audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        let midiAccess = null;
+        let oscMap = new Map();
+        
+        navigator.requestMIDIAccess().then((access) => {
+            midiAccess = access;
+            updateMidiInputs();
+            midiAccess.onstatechange = updateMidiInputs;
+        }).catch(err => console.error("MIDI access error: ", err));
+
+        function updateMidiInputs() {
+            const select = document.getElementById("midi-input");
+            select.innerHTML = "";
+            for (let input of midiAccess.inputs.values()) {
+                let option = document.createElement("option");
+                option.value = input.id;
+                option.textContent = input.name;
+                select.appendChild(option);
+            }
+            if (midiAccess.inputs.size > 0) {
+                select.value = select.options[0].value;
+                select.dispatchEvent(new Event("change"));
+            }
+        }
+
+        document.getElementById("midi-input").addEventListener("change", function() {
+            for (let input of midiAccess.inputs.values()) {
+                input.onmidimessage = null;
+            }
+            let selectedId = this.value;
+            let selectedInput = [...midiAccess.inputs.values()].find(input => input.id === selectedId);
+            if (selectedInput) {
+                selectedInput.onmidimessage = handleMidiMessage;
+            }
+        });
+
+        function handleMidiMessage(event) {
+            let [status, note, velocity] = event.data;
+            let isNoteOn = (status & 0xf0) === 0x90 && velocity > 0;
+            let isNoteOff = (status & 0xf0) === 0x80 || ((status & 0xf0) === 0x90 && velocity === 0);
+
+            if (isNoteOn) {
+                playBass(note, velocity / 127);
+            } else if (isNoteOff) {
+                stopBass(note);
+            }
+        }
+
+        function playBass(note, velocity) {
+            if (oscMap.has(note)) return;
+
+            let osc = audioContext.createOscillator();
+            let gain = audioContext.createGain();
+            osc.type = "sawtooth";
+            osc.frequency.value = 440 * Math.pow(2, (note - 69) / 12);
+            gain.gain.value = velocity * 0.5;
+            
+            let filter = audioContext.createBiquadFilter();
+            filter.type = "lowpass";
+            filter.frequency.value = 200;
+
+            osc.connect(filter);
+            filter.connect(gain);
+            gain.connect(audioContext.destination);
+            
+            osc.start();
+            oscMap.set(note, { osc, gain });
+        }
+
+        function stopBass(note) {
+            if (oscMap.has(note)) {
+                let { osc, gain } = oscMap.get(note);
+                gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.1);
+                setTimeout(() => osc.stop(), 100);
+                oscMap.delete(note);
+            }
+        }
+    </script>
+</body>
+</html>
