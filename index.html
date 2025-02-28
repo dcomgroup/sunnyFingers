@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MIDI Bass Synth with YouTube</title>
+    <script src="https://www.youtube.com/iframe_api"></script>
 </head>
 <body>
     <h2>MIDI Instrument Synth</h2>
@@ -22,15 +23,13 @@
     <input type="range" id="pitch" min="-100" max="100" value="0">
     <span id="pitch-value">0</span>
     
-    <h3>YouTube Player</h3>
-    <iframe id="youtube-frame" src="https://m.youtube.com" width="100%" height="500px" frameborder="0"></iframe>
-    
     <script>
         let audioContext = new (window.AudioContext || window.webkitAudioContext)();
         let midiAccess = null;
         let oscMap = new Map();
         let pitchFineTune = 0;
         let instrumentType = "bass";
+        let player;
         
         navigator.requestMIDIAccess().then((access) => {
             midiAccess = access;
@@ -51,6 +50,89 @@
                 select.value = select.options[0].value;
                 select.dispatchEvent(new Event("change"));
             }
+        }
+
+        document.getElementById("midi-input").addEventListener("change", function() {
+            for (let input of midiAccess.inputs.values()) {
+                input.onmidimessage = null;
+            }
+            let selectedId = this.value;
+            let selectedInput = [...midiAccess.inputs.values()].find(input => input.id === selectedId);
+            if (selectedInput) {
+                selectedInput.onmidimessage = handleMidiMessage;
+            }
+        });
+
+        document.getElementById("pitch").addEventListener("input", function() {
+            pitchFineTune = parseFloat(this.value);
+            document.getElementById("pitch-value").textContent = this.value;
+        });
+
+        document.getElementById("instrument").addEventListener("change", function() {
+            instrumentType = this.value;
+        });
+
+        function handleMidiMessage(event) {
+            let [status, note, velocity] = event.data;
+            let isNoteOn = (status & 0xf0) === 0x90 && velocity > 0;
+            let isNoteOff = (status & 0xf0) === 0x80 || ((status & 0xf0) === 0x90 && velocity === 0);
+
+            if (isNoteOn) {
+                playInstrument(note, velocity / 127);
+            } else if (isNoteOff) {
+                stopInstrument(note);
+            }
+        }
+
+        function playInstrument(note, velocity) {
+            if (oscMap.has(note)) return;
+            
+            let osc = audioContext.createOscillator();
+            let gain = audioContext.createGain();
+            osc.frequency.value = (440 * Math.pow(2, (note - 69 + pitchFineTune / 100) / 12));
+            gain.gain.value = velocity * 0.5;
+            
+            if (instrumentType === "bass") {
+                osc.type = "sawtooth";
+            } else if (instrumentType === "epiano") {
+                osc.type = "square";
+            } else if (instrumentType === "drums") {
+                osc.type = "noise";
+            }
+            
+            osc.connect(gain);
+            gain.connect(audioContext.destination);
+            
+            osc.start();
+            oscMap.set(note, { osc, gain });
+        }
+
+        function stopInstrument(note) {
+            if (oscMap.has(note)) {
+                let { osc, gain } = oscMap.get(note);
+                gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.1);
+                setTimeout(() => osc.stop(), 100);
+                oscMap.delete(note);
+            }
+        }
+
+        function searchYouTube() {
+            let query = document.getElementById("youtube-search").value;
+            window.open(`https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`);
+        }
+
+        function onYouTubeIframeAPIReady() {
+            player = new YT.Player('player', {
+                height: '390',
+                width: '640',
+                videoId: '',
+                playerVars: { 'controls': 1 },
+            });
+        }
+
+        function changeSpeed() {
+            let speed = parseFloat(document.getElementById("speed").value);
+            if (player) player.setPlaybackRate(speed);
         }
     </script>
 </body>
